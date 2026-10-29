@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "corsheaders",
     "apps.accounts.apps.AccountsConfig",
+    "apps.events.apps.EventsConfig",
 ]
 
 MIDDLEWARE = [
