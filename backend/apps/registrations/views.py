@@ -4,7 +4,7 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
-
+from django.shortcuts import get_object_or_404
 from apps.registrations.models import Registration
 from apps.registrations.serializers import RegistrationSerializer
 
@@ -59,10 +59,9 @@ class RegistrationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         with transaction.atomic():
-            registration = (
-                self.get_queryset()
-                .select_for_update()
-                .get(pk=pk)
+            registration = get_object_or_404(
+                self.get_queryset().select_for_update(),
+                pk=pk,
             )
 
             if registration.status == Registration.Status.CANCELLED:
