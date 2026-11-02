@@ -5,12 +5,16 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
-
 from apps.events.views import EventViewSet
-
+from apps.registrations.views import RegistrationViewSet
 
 router = DefaultRouter()
 router.register("events", EventViewSet, basename="event")
+router.register(
+    "registrations",
+    RegistrationViewSet,
+    basename="registration",
+)
 
 
 urlpatterns = [

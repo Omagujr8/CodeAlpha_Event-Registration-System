@@ -41,6 +41,21 @@ class RegistrationViewSet(viewsets.ModelViewSet):
             headers=headers,
         )
 
+    def update(self, request, *args, **kwargs):
+        from rest_framework.exceptions import MethodNotAllowed
+
+        raise MethodNotAllowed("PUT")
+
+    def partial_update(self, request, *args, **kwargs):
+        from rest_framework.exceptions import MethodNotAllowed
+
+        raise MethodNotAllowed("PATCH")
+
+    def destroy(self, request, *args, **kwargs):
+        from rest_framework.exceptions import MethodNotAllowed
+
+        raise MethodNotAllowed("DELETE")
+
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         with transaction.atomic():
