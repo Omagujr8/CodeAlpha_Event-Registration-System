@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "apps.accounts.apps.AccountsConfig",
     "apps.events.apps.EventsConfig",
+    "apps.registrations.apps.RegistrationsConfig",
 ]
 
 MIDDLEWARE = [
