@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "apps.events.apps.EventsConfig",
     "apps.registrations.apps.RegistrationsConfig",
     "apps.ticketing.apps.TicketingConfig",
+    "apps.payments.apps.PaymentsConfig",
 ]
 
 MIDDLEWARE = [
@@ -149,4 +150,10 @@ REDIS_URL = env(
 TICKET_HOLD_DURATION_SECONDS = env.int(
     "TICKET_HOLD_DURATION_SECONDS",
     default=600,
+)
+
+PAYSTACK_SECRET_KEY = env("PAYSTACK_SECRET_KEY", default="")
+PAYSTACK_BASE_URL = env(
+    "PAYSTACK_BASE_URL",
+    default="https://api.paystack.co",
 )

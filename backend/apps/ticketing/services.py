@@ -3,12 +3,10 @@ from datetime import timedelta
 import redis
 
 from django.conf import settings
-from django.core.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
-from rest_framework.exceptions import APIException
-
 from apps.events.models import TicketTier
 from apps.ticketing.models import TicketHold
 from apps.ticketing.redis_client import redis_client
