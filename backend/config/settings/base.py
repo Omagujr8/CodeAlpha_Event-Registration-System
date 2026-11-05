@@ -32,7 +32,7 @@ INSTALLED_APPS = [
     "apps.accounts.apps.AccountsConfig",
     "apps.events.apps.EventsConfig",
     "apps.registrations.apps.RegistrationsConfig",
-    "apps.ticketing",
+    "apps.ticketing.apps.TicketingConfig",
 ]
 
 MIDDLEWARE = [
