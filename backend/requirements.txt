@@ -4,3 +4,4 @@ djangorestframework-simplejwt
 psycopg[binary]
 django-environ
 django-cors-headers
+redis>=5,<7

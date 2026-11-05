@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "apps.accounts.apps.AccountsConfig",
     "apps.events.apps.EventsConfig",
     "apps.registrations.apps.RegistrationsConfig",
+    "apps.ticketing",
 ]
 
 MIDDLEWARE = [
@@ -139,3 +140,13 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": False,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
+
+REDIS_URL = env(
+    "REDIS_URL",
+    default="redis://127.0.0.1:6379/0",
+)
+
+TICKET_HOLD_DURATION_SECONDS = env.int(
+    "TICKET_HOLD_DURATION_SECONDS",
+    default=600,
+)
