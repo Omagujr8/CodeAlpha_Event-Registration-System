@@ -13,10 +13,13 @@ class Payment(models.Model):
         FAILED = "failed", "Failed"
         ABANDONED = "abandoned", "Abandoned"
 
+    def generate_payment_reference():
+        return uuid.uuid4().hex
+
     reference = models.CharField(
         max_length=100,
         unique=True,
-        default=lambda: uuid.uuid4().hex,
+        default=generate_payment_reference,
         editable=False,
     )
     hold = models.ForeignKey(
@@ -34,10 +37,11 @@ class Payment(models.Model):
     )
     authorization_url = models.URLField(max_length=500, blank=True)
     access_code = models.CharField(max_length=100, blank=True)
-    provider_transaction_id = models.PositiveBigIntegerField(
-        null=True,
-        blank=True,
-        unique=True,
+    provider_transaction_id = models.CharField(
+    max_length=30,
+    null=True,
+    blank=True,
+    unique=True,
     )
     provider_response = models.JSONField(default=dict, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
