@@ -151,7 +151,7 @@ class PaymentInitializationTests(APITestCase):
         mock_post.assert_not_called()
 
     @patch("apps.payments.services.requests.post")
-    def test_paystack_connection_failure_marks_payment_failed(
+    def test_paystack_timeout_keeps_payment_initialized(
         self,
         mock_post,
     ):
@@ -165,10 +165,19 @@ class PaymentInitializationTests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
         payment = Payment.objects.get(hold=self.hold)
-        self.assertEqual(payment.status, Payment.Status.FAILED)
+
+        self.assertEqual(
+            payment.status,
+            Payment.Status.INITIALIZED,
+        )
+
+        self.assertEqual(Payment.objects.count(), 1)
 
     @patch("apps.payments.services.requests.post")
     def test_client_cannot_supply_its_own_payment_amount(self, mock_post):
@@ -193,6 +202,70 @@ class PaymentInitializationTests(APITestCase):
         payment = Payment.objects.get(hold=self.hold)
         self.assertEqual(payment.amount_subunit, 300000)
         self.assertEqual(payment.currency, "NGN")
+
+    @patch("apps.payments.services.requests.post")
+    def test_repeated_initialization_reuses_existing_pending_payment(
+        self,
+        mock_post,
+    ):
+        mock_response = Mock()
+        mock_response.json.return_value = self.paystack_response
+        mock_post.return_value = mock_response
+
+        self.client.force_authenticate(user=self.attendee)
+
+        first_response = self.client.post(
+            self.url,
+            {"hold_reference": str(self.hold.reference)},
+            format="json",
+        )
+
+        second_response = self.client.post(
+            self.url,
+            {"hold_reference": str(self.hold.reference)},
+            format="json",
+        )
+
+        self.assertEqual(
+            first_response.status_code,
+            status.HTTP_201_CREATED,
+        )
+        self.assertEqual(
+            second_response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.assertEqual(
+            first_response.data["payment_reference"],
+            second_response.data["payment_reference"],
+        )
+
+        self.assertEqual(Payment.objects.filter(hold=self.hold).count(), 1)
+        mock_post.assert_called_once()
+
+    @patch("apps.payments.services.requests.post")
+    def test_existing_initializing_payment_blocks_new_attempt(
+        self,
+        mock_post,
+    ):
+        Payment.objects.create(
+            hold=self.hold,
+            amount_subunit=300000,
+            currency="NGN",
+            status=Payment.Status.INITIALIZED,
+        )
+
+        self.client.force_authenticate(user=self.attendee)
+
+        response = self.client.post(
+            self.url,
+            {"hold_reference": str(self.hold.reference)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(Payment.objects.filter(hold=self.hold).count(), 1)
+        mock_post.assert_not_called()
 
 @override_settings(
     PAYSTACK_SECRET_KEY="sk_test_example",
@@ -469,3 +542,97 @@ class PaystackWebhookTests(APITestCase):
 
         self.assertEqual(self.ticket_tier.sold_quantity, 0)
         self.assertEqual(Registration.objects.count(), 0)
+
+    @patch("apps.payments.webhooks.verify_paystack_transaction")
+    def test_expired_hold_marks_successful_payment_refund_required(
+        self,
+        mock_verify,
+    ):
+        mock_verify.return_value = self.verified_data
+
+        self.hold.expires_at = timezone.now() - timedelta(minutes=1)
+        self.hold.save(update_fields=["expires_at"])
+
+        response = self.send_webhook()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.payment.refresh_from_db()
+        self.hold.refresh_from_db()
+        self.ticket_tier.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.REFUND_REQUIRED,
+        )
+        self.assertIsNotNone(self.payment.paid_at)
+        self.assertEqual(
+            self.payment.provider_response["resolution_reason"],
+            "Ticket hold expired before fulfillment.",
+        )
+        self.assertEqual(
+            self.hold.status,
+            TicketHold.Status.EXPIRED,
+        )
+        self.assertEqual(self.ticket_tier.sold_quantity, 0)
+        self.assertEqual(Registration.objects.count(), 0)
+
+    @patch("apps.payments.webhooks.verify_paystack_transaction")
+    def test_unavailable_inventory_marks_payment_refund_required(
+        self,
+        mock_verify,
+    ):
+        mock_verify.return_value = self.verified_data
+
+        self.ticket_tier.sold_quantity = 99
+        self.ticket_tier.save(update_fields=["sold_quantity"])
+
+        response = self.send_webhook()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.payment.refresh_from_db()
+        self.ticket_tier.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.REFUND_REQUIRED,
+        )
+        self.assertIsNotNone(self.payment.paid_at)
+        self.assertEqual(
+            self.payment.provider_response["resolution_reason"],
+            "Insufficient ticket inventory for fulfillment.",
+        )
+        self.assertEqual(self.ticket_tier.sold_quantity, 99)
+        self.assertEqual(Registration.objects.count(), 0)
+
+    @patch("apps.payments.webhooks.verify_paystack_transaction")
+    def test_duplicate_webhook_does_not_process_refund_required_payment_twice(
+        self,
+        mock_verify,
+    ):
+        mock_verify.return_value = self.verified_data
+
+        self.hold.expires_at = timezone.now() - timedelta(minutes=1)
+        self.hold.save(update_fields=["expires_at"])
+
+        first_response = self.send_webhook()
+        second_response = self.send_webhook()
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.REFUND_REQUIRED,
+        )
+        self.assertEqual(
+            Registration.objects.filter(ticket_hold=self.hold).count(),
+            0,
+        )
+        self.assertEqual(
+            self.payment.provider_response["resolution_reason"],
+            "Ticket hold expired before fulfillment.",
+        )

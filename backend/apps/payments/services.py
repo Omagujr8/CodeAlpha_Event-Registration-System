@@ -1,9 +1,11 @@
 import requests
 
 from decimal import Decimal, ROUND_HALF_UP
+
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+
 from rest_framework.exceptions import APIException, ValidationError
 
 from apps.payments.models import Payment
@@ -16,13 +18,24 @@ class PaystackUnavailable(APIException):
     default_code = "payment_service_unavailable"
 
 
+class PaymentInitializationInProgress(APIException):
+    status_code = 409
+    default_detail = (
+        "A payment attempt already exists and requires reconciliation. "
+        "Please do not start another payment."
+    )
+    default_code = "payment_initialization_in_progress"
+
+
 def naira_to_kobo(amount):
     """Convert a naira Decimal amount into an integer number of kobo."""
     amount = Decimal(amount)
+
     kobo = (amount * Decimal("100")).quantize(
         Decimal("1"),
         rounding=ROUND_HALF_UP,
     )
+
     return int(kobo)
 
 
@@ -32,7 +45,8 @@ def initialize_paystack_payment(*, hold_reference, attendee):
             "Paystack has not been configured on the server."
         )
 
-    # Lock and validate the hold before creating a payment attempt.
+    # Lock the hold so concurrent requests cannot create
+    # multiple payment attempts for the same hold.
     with transaction.atomic():
         try:
             hold = (
@@ -59,6 +73,7 @@ def initialize_paystack_payment(*, hold_reference, attendee):
         if hold.expires_at <= timezone.now():
             hold.status = TicketHold.Status.EXPIRED
             hold.save(update_fields=["status"])
+
             raise ValidationError(
                 {"hold_reference": "This ticket hold has expired."}
             )
@@ -78,14 +93,52 @@ def initialize_paystack_payment(*, hold_reference, attendee):
                 {"amount": "The payment amount must be greater than zero."}
             )
 
-        # Prevent another payment attempt if this hold is already paid.
-        if Payment.objects.filter(
+        # Inspect previous payment attempts before creating another.
+        previous_payments = Payment.objects.filter(
             hold=hold,
+        ).order_by("-created_at")
+
+        if previous_payments.filter(
             status=Payment.Status.SUCCESS,
         ).exists():
             raise ValidationError(
                 {"hold_reference": "This ticket hold has already been paid."}
             )
+
+        if previous_payments.filter(
+            status=Payment.Status.REFUND_REQUIRED,
+        ).exists():
+            raise ValidationError(
+                {
+                    "hold_reference": (
+                        "This hold has a payment requiring resolution."
+                    )
+                }
+            )
+
+        latest_payment = previous_payments.first()
+
+        if latest_payment:
+            if latest_payment.status == Payment.Status.PENDING:
+                if latest_payment.authorization_url:
+                    # Reuse the existing checkout session.
+                    return latest_payment
+
+                raise PaymentInitializationInProgress()
+
+            if latest_payment.status in [
+                Payment.Status.INITIALIZED,
+                Payment.Status.ABANDONED,
+            ]:
+                raise PaymentInitializationInProgress()
+
+            if latest_payment.status == Payment.Status.FAILED:
+                # Only retry when we have evidence that Paystack
+                # explicitly rejected the initialization request.
+                provider_response = latest_payment.provider_response or {}
+
+                if provider_response.get("initialization_rejected") is not True:
+                    raise PaymentInitializationInProgress()
 
         payment = Payment.objects.create(
             hold=hold,
@@ -94,7 +147,7 @@ def initialize_paystack_payment(*, hold_reference, attendee):
             status=Payment.Status.INITIALIZED,
         )
 
-    # Make the external API request outside the database transaction.
+    # Do not keep a database transaction open during network requests.
     payload = {
         "email": attendee.email,
         "amount": payment.amount_subunit,
@@ -120,34 +173,65 @@ def initialize_paystack_payment(*, hold_reference, attendee):
             headers=headers,
             timeout=(5, 20),
         )
+
         response.raise_for_status()
         result = response.json()
 
     except (requests.RequestException, ValueError) as exc:
-        payment.status = Payment.Status.FAILED
-        payment.save(update_fields=["status", "updated_at"])
-        raise PaystackUnavailable() from exc
-
-    if not result.get("status") or not result.get("data"):
-        payment.status = Payment.Status.FAILED
-        payment.provider_response = result
-        payment.save(
-            update_fields=["status", "provider_response", "updated_at"]
-        )
+        # IMPORTANT:
+        # Do not mark this payment FAILED.
+        # Paystack may have received the request even if our
+        # application did not receive its response.
+        #
+        # Keep INITIALIZED so another request cannot create
+        # a second transaction for the same hold.
         raise PaystackUnavailable(
-            "Paystack could not initialize this transaction."
+            "The payment initialization outcome is uncertain. "
+            "Please do not retry payment until this attempt is reconciled."
+        ) from exc
+
+    if not isinstance(result, dict):
+        raise PaystackUnavailable(
+            "Paystack returned an invalid initialization response."
         )
 
-    data = result["data"]
+    if result.get("status") is False:
+        # This is an explicit provider rejection, not a timeout.
+        payment.status = Payment.Status.FAILED
+        payment.provider_response = {
+            "message": result.get("message"),
+            "initialization_rejected": True,
+        }
+
+        payment.save(
+            update_fields=[
+                "status",
+                "provider_response",
+                "updated_at",
+            ]
+        )
+
+        raise PaystackUnavailable(
+            "Paystack rejected the payment initialization request."
+        )
+
+    if result.get("status") is not True:
+        # An unclear response must be reconciled, not retried blindly.
+        raise PaystackUnavailable(
+            "Paystack returned an uncertain initialization response."
+        )
+
+    data = result.get("data")
+
+    if not isinstance(data, dict):
+        raise PaystackUnavailable(
+            "Paystack returned an incomplete transaction response."
+        )
+
     authorization_url = data.get("authorization_url")
     access_code = data.get("access_code")
 
     if not authorization_url or not access_code:
-        payment.status = Payment.Status.FAILED
-        payment.provider_response = result
-        payment.save(
-            update_fields=["status", "provider_response", "updated_at"]
-        )
         raise PaystackUnavailable(
             "Paystack returned an incomplete transaction response."
         )
@@ -158,6 +242,7 @@ def initialize_paystack_payment(*, hold_reference, attendee):
     payment.provider_response = {
         "message": result.get("message"),
     }
+
     payment.save(
         update_fields=[
             "authorization_url",
