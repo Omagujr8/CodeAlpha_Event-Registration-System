@@ -24,4 +24,5 @@ urlpatterns = [
     path("api/", include(router.urls)),
     path("api/accounts/", include("apps.accounts.urls")),
     path("api/ticketing/",include("apps.ticketing.urls")),
+    path("api/payments/", include("apps.payments.urls")),
 ]
