@@ -15,6 +15,7 @@ def verify_paystack_transaction(payment):
     Verify a transaction directly with Paystack.
     Never trust the webhook payload as proof of payment.
     """
+
     if not settings.PAYSTACK_SECRET_KEY:
         raise PaymentVerificationUnavailable(
             "Paystack is not configured."
@@ -42,7 +43,10 @@ def verify_paystack_transaction(payment):
     except (requests.RequestException, ValueError) as exc:
         raise PaymentVerificationUnavailable() from exc
 
-    if not result.get("status") or not isinstance(result.get("data"), dict):
+    if (
+        not result.get("status")
+        or not isinstance(result.get("data"), dict)
+    ):
         raise PaymentVerificationUnavailable(
             "Paystack returned an invalid verification response."
         )
@@ -60,5 +64,12 @@ def verify_paystack_transaction(payment):
 
     if data.get("currency") != payment.currency:
         raise ValidationError("Verified payment currency does not match.")
+
+    transaction_id = data.get("id")
+
+    if transaction_id is None or not str(transaction_id).strip():
+        raise PaymentVerificationUnavailable(
+            "Paystack did not provide a transaction ID."
+        )
 
     return data

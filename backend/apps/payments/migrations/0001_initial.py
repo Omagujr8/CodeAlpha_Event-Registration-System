@@ -29,7 +29,7 @@ class Migration(migrations.Migration):
                 (
                     "reference",
                     models.CharField(
-                        default=apps.payments.models.Payment.generate_payment_reference,
+                        default=apps.payments.models.generate_payment_reference,
                         editable=False,
                         max_length=100,
                         unique=True,
