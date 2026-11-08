@@ -6,6 +6,9 @@ import requests
 import hashlib
 import hmac
 import json
+from io import StringIO
+
+from django.core.management import call_command
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
@@ -865,3 +868,245 @@ class PaymentReconciliationTests(APITestCase):
 
         self.assertEqual(result["result"], "skipped")
         mock_get.assert_not_called()
+
+@override_settings(
+    PAYSTACK_SECRET_KEY="sk_test_example",
+    PAYSTACK_BASE_URL="https://api.paystack.co",
+)
+class ReconcilePaymentsCommandTests(APITestCase):
+
+    def setUp(self):
+        self.attendee = User.objects.create_user(
+            username="command_attendee",
+            email="command@example.com",
+            password="TestPassword123!",
+        )
+
+        now = timezone.now()
+
+        self.event = Event.objects.create(
+            organizer=self.attendee,
+            title="Command Test Conference",
+            slug="command-test-conference",
+            description="Testing the reconciliation command.",
+            venue="Minna",
+            starts_at=now + timedelta(days=10),
+            ends_at=now + timedelta(days=11),
+            status=Event.Status.PUBLISHED,
+        )
+
+        self.ticket_tier = TicketTier.objects.create(
+            event=self.event,
+            name="Regular",
+            price=Decimal("1500.00"),
+            currency="NGN",
+            total_quantity=100,
+            sold_quantity=0,
+            is_active=True,
+        )
+
+        self.hold = TicketHold.objects.create(
+            attendee=self.attendee,
+            ticket_tier=self.ticket_tier,
+            quantity=1,
+            status=TicketHold.Status.ACTIVE,
+            expires_at=now + timedelta(minutes=10),
+        )
+
+    def create_payment(self):
+        return Payment.objects.create(
+            hold=self.hold,
+            amount_subunit=150000,
+            currency="NGN",
+            status=Payment.Status.INITIALIZED,
+        )
+
+    @patch(
+        "apps.payments.management.commands.reconcile_payments.reconcile_payment"
+    )
+    def test_command_reports_when_no_payments_need_reconciliation(
+        self,
+        mock_reconcile,
+    ):
+        output = StringIO()
+
+        call_command(
+            "reconcile_payments",
+            stdout=output,
+        )
+
+        self.assertIn(
+            "No unresolved payments need reconciliation.",
+            output.getvalue(),
+        )
+        mock_reconcile.assert_not_called()
+
+    @patch(
+        "apps.payments.management.commands.reconcile_payments.reconcile_payment"
+    )
+    def test_command_only_processes_old_initialized_payments(
+        self,
+        mock_reconcile,
+    ):
+        old_payment = self.create_payment()
+        recent_payment = self.create_payment()
+
+        Payment.objects.filter(pk=old_payment.pk).update(
+            created_at=timezone.now() - timedelta(minutes=5)
+        )
+
+        mock_reconcile.return_value = {
+            "reference": old_payment.reference,
+            "result": "pending",
+            "detail": "Still pending.",
+        }
+
+        call_command(
+            "reconcile_payments",
+            minutes=1,
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+        mock_reconcile.assert_called_once_with(
+            payment_reference=old_payment.reference,
+        )
+
+        self.assertNotEqual(
+            old_payment.reference,
+            recent_payment.reference,
+        )
+
+    @patch(
+        "apps.payments.management.commands.reconcile_payments.reconcile_payment"
+    )
+    def test_command_respects_batch_limit(self, mock_reconcile):
+        payments = [self.create_payment() for _ in range(3)]
+
+        Payment.objects.filter(
+            pk__in=[payment.pk for payment in payments]
+        ).update(
+            created_at=timezone.now() - timedelta(minutes=5)
+        )
+
+        mock_reconcile.side_effect = lambda payment_reference: {
+            "reference": payment_reference,
+            "result": "pending",
+            "detail": "Still pending.",
+        }
+
+        call_command(
+            "reconcile_payments",
+            minutes=1,
+            limit=2,
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+        self.assertEqual(mock_reconcile.call_count, 2)
+
+@override_settings(
+    PAYSTACK_SECRET_KEY="sk_test_example",
+    PAYSTACK_BASE_URL="https://api.paystack.co",
+)
+class ReconciliationRaceConditionTests(APITestCase):
+
+    def setUp(self):
+        self.attendee = User.objects.create_user(
+            username="race_attendee",
+            email="race@example.com",
+            password="TestPassword123!",
+        )
+
+        now = timezone.now()
+
+        self.event = Event.objects.create(
+            organizer=self.attendee,
+            title="Race Condition Conference",
+            slug="race-condition-conference",
+            description="Testing webhook and reconciliation races.",
+            venue="Minna",
+            starts_at=now + timedelta(days=10),
+            ends_at=now + timedelta(days=11),
+            status=Event.Status.PUBLISHED,
+        )
+
+        self.ticket_tier = TicketTier.objects.create(
+            event=self.event,
+            name="Regular",
+            price=Decimal("1500.00"),
+            currency="NGN",
+            total_quantity=100,
+            sold_quantity=0,
+            is_active=True,
+        )
+
+        self.hold = TicketHold.objects.create(
+            attendee=self.attendee,
+            ticket_tier=self.ticket_tier,
+            quantity=2,
+            status=TicketHold.Status.ACTIVE,
+            expires_at=now + timedelta(minutes=10),
+        )
+
+        self.payment = Payment.objects.create(
+            hold=self.hold,
+            amount_subunit=300000,
+            currency="NGN",
+            status=Payment.Status.INITIALIZED,
+        )
+
+        self.verified_data = {
+            "id": 987654321,
+            "reference": self.payment.reference,
+            "status": "success",
+            "amount": 300000,
+            "currency": "NGN",
+        }
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_late_failed_response_does_not_overwrite_webhook_success(
+        self,
+        mock_get,
+    ):
+        from apps.payments.confirmation import confirm_successful_payment
+
+        # Simulate a webhook confirming payment while reconciliation
+        # is waiting for Paystack's verification response.
+        def confirm_payment_then_return_failure(*args, **kwargs):
+            confirm_successful_payment(
+                payment_reference=self.payment.reference,
+                verified_data=self.verified_data,
+            )
+
+            mock_response = Mock()
+            mock_response.json.return_value = {
+                "status": True,
+                "message": "Verification successful",
+                "data": {
+                    **self.verified_data,
+                    "status": "failed",
+                },
+            }
+            return mock_response
+
+        mock_get.side_effect = confirm_payment_then_return_failure
+
+        result = reconcile_payment(
+            payment_reference=self.payment.reference,
+        )
+
+        self.payment.refresh_from_db()
+        self.ticket_tier.refresh_from_db()
+
+        self.assertEqual(result["result"], Payment.Status.SUCCESS)
+        self.assertEqual(self.payment.status, Payment.Status.SUCCESS)
+        self.assertEqual(self.ticket_tier.sold_quantity, 2)
+
+        self.assertEqual(
+            Registration.objects.filter(
+                ticket_hold=self.hold,
+                status=Registration.Status.CONFIRMED,
+            ).count(),
+            1,
+        )
