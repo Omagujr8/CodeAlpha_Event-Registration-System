@@ -18,6 +18,10 @@ from apps.events.models import Event, TicketTier
 from apps.ticketing.models import TicketHold
 from apps.payments.models import Payment
 from apps.registrations.models import Registration
+from apps.payments.reconciliation import (
+    ReconciliationUnavailable,
+    reconcile_payment,
+)
 
 
 User = get_user_model()
@@ -636,3 +640,228 @@ class PaystackWebhookTests(APITestCase):
             self.payment.provider_response["resolution_reason"],
             "Ticket hold expired before fulfillment.",
         )
+
+@override_settings(
+    PAYSTACK_SECRET_KEY="sk_test_example",
+    PAYSTACK_BASE_URL="https://api.paystack.co",
+)
+class PaymentReconciliationTests(APITestCase):
+
+    def setUp(self):
+        self.attendee = User.objects.create_user(
+            username="reconciliation_attendee",
+            email="reconciliation@example.com",
+            password="TestPassword123!",
+        )
+
+        now = timezone.now()
+
+        self.event = Event.objects.create(
+            organizer=self.attendee,
+            title="Reconciliation Conference",
+            slug="reconciliation-conference",
+            description="Testing payment reconciliation.",
+            venue="Minna",
+            starts_at=now + timedelta(days=10),
+            ends_at=now + timedelta(days=11),
+            status=Event.Status.PUBLISHED,
+        )
+
+        self.ticket_tier = TicketTier.objects.create(
+            event=self.event,
+            name="Regular",
+            price=Decimal("1500.00"),
+            currency="NGN",
+            total_quantity=100,
+            sold_quantity=0,
+            is_active=True,
+        )
+
+        self.hold = TicketHold.objects.create(
+            attendee=self.attendee,
+            ticket_tier=self.ticket_tier,
+            quantity=2,
+            status=TicketHold.Status.ACTIVE,
+            expires_at=now + timedelta(minutes=10),
+        )
+
+        self.payment = Payment.objects.create(
+            hold=self.hold,
+            amount_subunit=300000,
+            currency="NGN",
+            status=Payment.Status.INITIALIZED,
+        )
+
+        self.verified_data = {
+            "id": 987654321,
+            "reference": self.payment.reference,
+            "status": "success",
+            "amount": 300000,
+            "currency": "NGN",
+        }
+
+    def make_paystack_response(self, data=None):
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "status": True,
+            "message": "Verification successful",
+            "data": data or self.verified_data,
+        }
+        return mock_response
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_successful_reconciliation_confirms_payment(self, mock_get):
+        mock_get.return_value = self.make_paystack_response()
+
+        result = reconcile_payment(
+            payment_reference=self.payment.reference,
+        )
+
+        self.payment.refresh_from_db()
+        self.hold.refresh_from_db()
+        self.ticket_tier.refresh_from_db()
+
+        self.assertEqual(result["result"], Payment.Status.SUCCESS)
+        self.assertEqual(self.payment.status, Payment.Status.SUCCESS)
+        self.assertEqual(self.hold.status, TicketHold.Status.CONVERTED)
+        self.assertEqual(self.ticket_tier.sold_quantity, 2)
+
+        self.assertTrue(
+            Registration.objects.filter(
+                ticket_hold=self.hold,
+                status=Registration.Status.CONFIRMED,
+            ).exists()
+        )
+
+        mock_get.assert_called_once()
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_pending_transaction_remains_initialized(self, mock_get):
+        pending_data = {
+            **self.verified_data,
+            "status": "pending",
+        }
+        mock_get.return_value = self.make_paystack_response(pending_data)
+
+        result = reconcile_payment(
+            payment_reference=self.payment.reference,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(result["result"], "pending")
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.INITIALIZED,
+        )
+        self.assertEqual(Registration.objects.count(), 0)
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_failed_transaction_marks_payment_failed(self, mock_get):
+        failed_data = {
+            **self.verified_data,
+            "status": "failed",
+        }
+        mock_get.return_value = self.make_paystack_response(failed_data)
+
+        result = reconcile_payment(
+            payment_reference=self.payment.reference,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(result["result"], Payment.Status.FAILED)
+        self.assertEqual(self.payment.status, Payment.Status.FAILED)
+        self.assertEqual(
+            self.payment.provider_response["reconciliation"]["provider_status"],
+            "failed",
+        )
+        self.assertEqual(Registration.objects.count(), 0)
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_abandoned_transaction_marks_payment_failed(self, mock_get):
+        abandoned_data = {
+            **self.verified_data,
+            "status": "abandoned",
+        }
+        mock_get.return_value = self.make_paystack_response(abandoned_data)
+
+        result = reconcile_payment(
+            payment_reference=self.payment.reference,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(result["result"], Payment.Status.FAILED)
+        self.assertEqual(self.payment.status, Payment.Status.FAILED)
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_network_timeout_leaves_payment_initialized(self, mock_get):
+        mock_get.side_effect = requests.Timeout()
+
+        with self.assertRaises(ReconciliationUnavailable):
+            reconcile_payment(
+                payment_reference=self.payment.reference,
+            )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.INITIALIZED,
+        )
+        self.assertEqual(Registration.objects.count(), 0)
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_reference_mismatch_does_not_change_payment(self, mock_get):
+        incorrect_data = {
+            **self.verified_data,
+            "reference": "some-other-payment-reference",
+        }
+        mock_get.return_value = self.make_paystack_response(incorrect_data)
+
+        with self.assertRaises(ReconciliationUnavailable):
+            reconcile_payment(
+                payment_reference=self.payment.reference,
+            )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.INITIALIZED,
+        )
+        self.assertEqual(Registration.objects.count(), 0)
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_amount_mismatch_does_not_change_payment(self, mock_get):
+        incorrect_data = {
+            **self.verified_data,
+            "amount": 100,
+        }
+        mock_get.return_value = self.make_paystack_response(incorrect_data)
+
+        with self.assertRaises(ReconciliationUnavailable):
+            reconcile_payment(
+                payment_reference=self.payment.reference,
+            )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.INITIALIZED,
+        )
+        self.assertEqual(Registration.objects.count(), 0)
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_already_resolved_payment_is_skipped(self, mock_get):
+        self.payment.status = Payment.Status.PENDING
+        self.payment.save(update_fields=["status"])
+
+        result = reconcile_payment(
+            payment_reference=self.payment.reference,
+        )
+
+        self.assertEqual(result["result"], "skipped")
+        mock_get.assert_not_called()
