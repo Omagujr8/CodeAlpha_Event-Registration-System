@@ -126,18 +126,27 @@ def initialize_paystack_payment(*, hold_reference, attendee):
 
                 raise PaymentInitializationInProgress()
 
-            if latest_payment.status in [
-                Payment.Status.INITIALIZED,
-                Payment.Status.ABANDONED,
-            ]:
+            if latest_payment.status == Payment.Status.INITIALIZED:
                 raise PaymentInitializationInProgress()
+
+            if latest_payment.status == Payment.Status.ABANDONED:
+                reconciliation = (
+                    latest_payment.provider_response.get("reconciliation") or {}
+                )
+                if reconciliation.get("retryable") is not True:
+                    raise PaymentInitializationInProgress()
 
             if latest_payment.status == Payment.Status.FAILED:
                 # Only retry when we have evidence that Paystack
                 # explicitly rejected the initialization request.
                 provider_response = latest_payment.provider_response or {}
 
-                if provider_response.get("initialization_rejected") is not True:
+                reconciliation = provider_response.get("reconciliation") or {}
+                safely_retryable = (
+                    provider_response.get("initialization_rejected") is True
+                    or reconciliation.get("retryable") is True
+                )
+                if not safely_retryable:
                     raise PaymentInitializationInProgress()
 
         payment = Payment.objects.create(
@@ -226,6 +235,13 @@ def initialize_paystack_payment(*, hold_reference, attendee):
     if not isinstance(data, dict):
         raise PaystackUnavailable(
             "Paystack returned an incomplete transaction response."
+        )
+
+    if data.get("reference") != payment.reference:
+        # A mismatched response is uncertain; keep the payment INITIALIZED
+        # so reconciliation can inspect the reference we generated.
+        raise PaystackUnavailable(
+            "Paystack returned a transaction with an unexpected reference."
         )
 
     authorization_url = data.get("authorization_url")
