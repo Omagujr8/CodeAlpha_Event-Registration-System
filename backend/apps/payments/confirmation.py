@@ -5,6 +5,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.events.models import TicketTier
 from apps.payments.models import Payment
+from apps.payments.services import naira_to_kobo
 from apps.registrations.models import Registration
 from apps.ticketing.models import TicketHold
 
@@ -132,9 +133,7 @@ def confirm_successful_payment(*, payment_reference, verified_data):
     if ticket_tier.currency != payment.currency:
         raise ValidationError("Ticket currency mismatch.")
 
-    expected_amount = int(
-        ticket_tier.price * hold.quantity * 100
-    )
+    expected_amount = naira_to_kobo(ticket_tier.price * hold.quantity)
 
     if expected_amount != payment.amount_subunit:
         return mark_payment_refund_required(
