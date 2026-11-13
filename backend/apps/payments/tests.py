@@ -87,11 +87,23 @@ class PaymentInitializationTests(APITestCase):
             },
         }
 
+    def matching_paystack_response(self, reference):
+        response = Mock()
+        payload = {
+            **self.paystack_response,
+            "data": {
+                **self.paystack_response["data"],
+                "reference": reference,
+            },
+        }
+        response.json.return_value = payload
+        return response
+
     @patch("apps.payments.services.requests.post")
     def test_attendee_can_initialize_payment(self, mock_post):
-        mock_response = Mock()
-        mock_response.json.return_value = self.paystack_response
-        mock_post.return_value = mock_response
+        mock_post.side_effect = lambda *args, **kwargs: (
+            self.matching_paystack_response(kwargs["json"]["reference"])
+        )
 
         self.client.force_authenticate(user=self.attendee)
 
@@ -181,9 +193,9 @@ class PaymentInitializationTests(APITestCase):
 
     @patch("apps.payments.services.requests.post")
     def test_client_cannot_supply_its_own_payment_amount(self, mock_post):
-        mock_response = Mock()
-        mock_response.json.return_value = self.paystack_response
-        mock_post.return_value = mock_response
+        mock_post.side_effect = lambda *args, **kwargs: (
+            self.matching_paystack_response(kwargs["json"]["reference"])
+        )
 
         self.client.force_authenticate(user=self.attendee)
 
@@ -208,9 +220,9 @@ class PaymentInitializationTests(APITestCase):
         self,
         mock_post,
     ):
-        mock_response = Mock()
-        mock_response.json.return_value = self.paystack_response
-        mock_post.return_value = mock_response
+        mock_post.side_effect = lambda *args, **kwargs: (
+            self.matching_paystack_response(kwargs["json"]["reference"])
+        )
 
         self.client.force_authenticate(user=self.attendee)
 
