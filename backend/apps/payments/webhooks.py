@@ -44,11 +44,22 @@ class PaystackWebhookView(APIView):
             )
 
         event = request.data
+        if not isinstance(event, dict):
+            return Response(
+                {"detail": "Invalid webhook payload."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if event.get("event") != "charge.success":
             return Response({"received": True}, status=status.HTTP_200_OK)
 
-        data = event.get("data") or {}
+        data = event.get("data")
+        if not isinstance(data, dict):
+            return Response(
+                {"detail": "Invalid webhook transaction data."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         reference = data.get("reference")
 
         if not reference:
