@@ -15,12 +15,13 @@ BASE_RETRY_SECONDS = 60
 def enqueue_registration_confirmation(*, registration, tickets):
     attendee = registration.attendee
     event = registration.event
+    references = ", ".join(str(ticket.reference) for ticket in tickets)
     body = (
         f"Hello {attendee.get_full_name() or attendee.email},\n\n"
         f"Your registration for {event.title} is confirmed.\n"
-        f"Ticket reference: {ticket.reference}\n"
+        f"Ticket references: {references}\n"
         f"Ticket type: {registration.ticket_tier.name}\n"
-        "Sign in to your account to retrieve your QR ticket.\n"
+        "Sign in to your account to retrieve your QR ticket(s).\n"
     )
     return EmailOutbox.objects.create(
         recipient=attendee.email,
@@ -46,10 +47,8 @@ def deliver_pending_emails(*, limit=100):
                 message = EmailOutbox.objects.select_for_update().get(pk=email_id)
             except EmailOutbox.DoesNotExist:
                 continue
-
             if message.status != EmailOutbox.Status.PENDING:
                 continue
-
             try:
                 delivered = send_mail(
                     subject=message.subject,
@@ -70,17 +69,13 @@ def deliver_pending_emails(*, limit=100):
                     delay = BASE_RETRY_SECONDS * (2 ** (message.attempts - 1))
                     message.next_attempt_at = now + timedelta(seconds=delay)
                     deferred += 1
-                message.save(update_fields=[
-                    "attempts", "last_error", "status", "next_attempt_at"
-                ])
+                message.save(update_fields=["attempts", "last_error", "status", "next_attempt_at"])
             else:
                 message.attempts += 1
                 message.status = EmailOutbox.Status.SENT
                 message.sent_at = timezone.now()
                 message.last_error = ""
-                message.save(update_fields=[
-                    "attempts", "status", "sent_at", "last_error"
-                ])
+                message.save(update_fields=["attempts", "status", "sent_at", "last_error"])
                 sent += 1
 
     return {"sent": sent, "failed": failed, "deferred": deferred, "checked": len(candidates)}
