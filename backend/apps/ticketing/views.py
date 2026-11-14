@@ -143,7 +143,7 @@ class TicketCheckInView(APIView):
                 raise ValidationError({"ticket": "This ticket has been revoked."})
             if ticket.status == IssuedTicket.Status.CHECKED_IN:
                 raise ValidationError({"ticket": "This ticket has already been checked in."})
-            if ticket.registration.status != ticket.registration.Status.CONFIRMED:
+            if ticket.registration.status != "confirmed":
                 raise ValidationError({"ticket": "This registration is not confirmed."})
 
             ticket.status = IssuedTicket.Status.CHECKED_IN
