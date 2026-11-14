@@ -22,7 +22,7 @@ class Migration(migrations.Migration):
                 ("issued_at", models.DateTimeField(auto_now_add=True)),
                 ("checked_in_at", models.DateTimeField(blank=True, null=True)),
                 ("checked_in_by", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="ticket_checkins", to=settings.AUTH_USER_MODEL)),
-                ("registration", models.OneToOneField(on_delete=django.db.models.deletion.PROTECT, related_name="ticket", to="registrations.registration")),
+                ("registration", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="tickets", to="registrations.registration")),
             ],
             options={
                 "ordering": ["-issued_at"],
