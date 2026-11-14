@@ -12,8 +12,15 @@ TICKET_TOKEN_SALT = "event-registration.ticket.v1"
 
 
 def issue_ticket(*, registration):
-    ticket, _ = IssuedTicket.objects.get_or_create(registration=registration)
-    return ticket
+    quantity = registration.ticket_hold.quantity if registration.ticket_hold_id else 1
+    existing = IssuedTicket.objects.filter(registration=registration).count()
+    tickets = [
+        IssuedTicket(registration=registration)
+        for _ in range(max(0, quantity - existing))
+    ]
+    if tickets:
+        IssuedTicket.objects.bulk_create(tickets)
+    return IssuedTicket.objects.filter(registration=registration).order_by("issued_at")
 
 
 def build_ticket_token(ticket):
