@@ -19,7 +19,7 @@ from rest_framework.test import APITestCase
 
 from apps.events.models import Event, TicketTier
 from apps.ticketing.models import TicketHold, IssuedTicket
-from apps.payments.models import Payment
+from apps.payments.models import Payment, RefundAttempt
 from apps.registrations.models import Registration, EmailOutbox
 from apps.payments.reconciliation import (
     ReconciliationUnavailable,
