@@ -18,9 +18,9 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.events.models import Event, TicketTier
-from apps.ticketing.models import TicketHold
+from apps.ticketing.models import TicketHold, IssuedTicket
 from apps.payments.models import Payment
-from apps.registrations.models import Registration
+from apps.registrations.models import Registration, EmailOutbox
 from apps.payments.reconciliation import (
     ReconciliationUnavailable,
     reconcile_payment,
@@ -413,6 +413,19 @@ class PaystackWebhookTests(APITestCase):
         self.assertEqual(
             Registration.objects.filter(
                 ticket_hold=self.hold,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            IssuedTicket.objects.filter(
+                registration__ticket_hold=self.hold,
+            ).count(),
+            self.hold.quantity,
+        )
+        self.assertEqual(
+            EmailOutbox.objects.filter(
+                recipient=self.attendee.email,
+                status=EmailOutbox.Status.PENDING,
             ).count(),
             1,
         )
