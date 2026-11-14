@@ -4,10 +4,12 @@ from apps.ticketing.views import (
     TicketHoldCreateView,
     TicketHoldDetailView,
     TicketHoldReleaseView,
+    MyTicketDetailView,
+    TicketCheckInView,
 )
 
 
-urlpatterns = [
+urlpatterns = [\n    path("tickets/<uuid:reference>/", MyTicketDetailView.as_view(), name="issued-ticket-detail"),\n    path("check-in/", TicketCheckInView.as_view(), name="ticket-check-in"),
     path(
         "holds/",
         TicketHoldCreateView.as_view(),
