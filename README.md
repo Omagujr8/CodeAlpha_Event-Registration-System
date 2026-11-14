@@ -68,7 +68,7 @@ The API is available at `http://127.0.0.1:8000/`.
 | GET | `/api/ticketing/holds/{reference}/` | Retrieve the caller's hold |
 | POST | `/api/ticketing/holds/{reference}/release/` | Release the caller's active hold |\n| GET | `/api/ticketing/tickets/{reference}/` | Retrieve the caller's issued ticket and QR SVG |\n| POST | `/api/ticketing/check-in/` | Organizer/staff scans and validates a signed QR token |
 | POST | `/api/payments/initialize/` | Initialize Paystack for an owned hold |
-| POST | `/api/payments/webhook/paystack/` | Receive signed Paystack webhooks |
+| POST | `/api/payments/webhook/paystack/` | Receive signed Paystack webhooks |\n| POST | `/api/payments/refunds/{payment_reference}/issue/` | Staff-only initiation of a Paystack refund for a `REFUND_REQUIRED` payment |
 | GET | `/api/registrations/` | List the caller's registrations |
 | POST | `/api/registrations/{id}/cancel/` | Cancel an eligible pending registration |
 
@@ -94,7 +94,7 @@ The current repository does not yet include a durable queued email/outbox with r
 
 ## Known MVP limitations
 
-- Actual Paystack refund execution is not implemented. `REFUND_REQUIRED` records a successful payment that could not be fulfilled; it requires a documented manual refund/reconciliation process.
+- Staff can initiate an actual Paystack refund for a `REFUND_REQUIRED` payment through `POST /api/payments/refunds/{payment_reference}/issue/`. The API records the provider response and marks a payment `REFUNDED` only when Paystack reports the refund as processed. Pending or uncertain refunds must be reconciled against the Paystack dashboard before any retry; the endpoint intentionally avoids duplicate submissions.
 - QR ticket issuance and check-in are not yet implemented.
 - Durable queued email delivery and retry handling are not yet implemented.
 - Waitlists, advanced analytics, exports, and attendee self-service are outside this MVP.
