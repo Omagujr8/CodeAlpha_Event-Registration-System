@@ -12,7 +12,7 @@ MAX_EMAIL_ATTEMPTS = 5
 BASE_RETRY_SECONDS = 60
 
 
-def enqueue_registration_confirmation(*, registration, ticket):
+def enqueue_registration_confirmation(*, registration, tickets):
     attendee = registration.attendee
     event = registration.event
     body = (
