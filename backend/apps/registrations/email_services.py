@@ -51,13 +51,15 @@ def deliver_pending_emails(*, limit=100):
                 continue
 
             try:
-                send_mail(
+                delivered = send_mail(
                     subject=message.subject,
                     message=message.body,
                     from_email=settings.DEFAULT_FROM_EMAIL,
                     recipient_list=[message.recipient],
                     fail_silently=False,
                 )
+                if delivered != 1:
+                    raise OSError("Email backend did not confirm delivery.")
             except Exception as exc:
                 message.attempts += 1
                 message.last_error = str(exc)[:2000]
