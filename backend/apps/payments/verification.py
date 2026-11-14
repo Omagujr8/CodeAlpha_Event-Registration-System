@@ -44,7 +44,8 @@ def verify_paystack_transaction(payment):
         raise PaymentVerificationUnavailable() from exc
 
     if (
-        not result.get("status")
+        not isinstance(result, dict)
+        or result.get("status") is not True
         or not isinstance(result.get("data"), dict)
     ):
         raise PaymentVerificationUnavailable(

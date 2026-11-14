@@ -17,18 +17,23 @@ class ReconciliationUnavailable(APIException):
 
 def reconcile_payment(*, payment_reference):
     """
-    Reconcile an unresolved INITIALIZED payment against Paystack.
+    Reconcile an unresolved payment against Paystack.
 
-    This function never creates a new payment or changes the payment reference.
+    Both INITIALIZED transactions (where initialization response was uncertain)
+    and PENDING transactions (where a webhook may have been missed) are checked.
     """
     try:
         payment = Payment.objects.get(reference=payment_reference)
-    except Payment.DoesNotExist:
+    except Payment.DoesNotExist as exc:
         raise Payment.DoesNotExist(
             f"No payment exists with reference {payment_reference}."
-        )
+        ) from exc
 
-    if payment.status != Payment.Status.INITIALIZED:
+    unresolved_statuses = {
+        Payment.Status.INITIALIZED,
+        Payment.Status.PENDING,
+    }
+    if payment.status not in unresolved_statuses:
         return {
             "reference": payment.reference,
             "result": "skipped",
@@ -64,20 +69,17 @@ def reconcile_payment(*, payment_reference):
         )
 
     data = result["data"]
-
-    # Never reconcile a transaction belonging to another reference.
     if data.get("reference") != payment.reference:
         raise ReconciliationUnavailable(
             "The verified transaction reference does not match."
         )
 
-    # Confirm that the provider is reporting the expected amount and currency.
     try:
         verified_amount = int(data.get("amount"))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
         raise ReconciliationUnavailable(
             "Paystack returned an invalid transaction amount."
-        )
+        ) from exc
 
     if verified_amount != payment.amount_subunit:
         raise ReconciliationUnavailable(
@@ -98,15 +100,11 @@ def reconcile_payment(*, payment_reference):
                 "Paystack did not provide a transaction ID."
             )
 
-        # The existing confirmation service handles locking, inventory,
-        # registration creation, and duplicate-event protection.
         confirm_successful_payment(
             payment_reference=payment.reference,
             verified_data=data,
         )
-
         payment.refresh_from_db()
-
         return {
             "reference": payment.reference,
             "result": payment.status,
@@ -121,20 +119,22 @@ def reconcile_payment(*, payment_reference):
         }
 
     if provider_status in {"failed", "abandoned"}:
-        # Lock again because a webhook could have confirmed the payment
-        # while the verification request was in progress.
         with transaction.atomic():
             locked_payment = (
                 Payment.objects.select_for_update()
                 .get(reference=payment.reference)
             )
-
-            if locked_payment.status == Payment.Status.INITIALIZED:
-                locked_payment.status = Payment.Status.FAILED
+            if locked_payment.status in unresolved_statuses:
+                locked_payment.status = (
+                    Payment.Status.FAILED
+                    if provider_status == "failed"
+                    else Payment.Status.ABANDONED
+                )
                 locked_payment.provider_response = {
                     "reconciliation": {
                         "provider_status": provider_status,
                         "checked_at": timezone.now().isoformat(),
+                        "retryable": True,
                     }
                 }
                 locked_payment.save(
@@ -146,17 +146,17 @@ def reconcile_payment(*, payment_reference):
                 )
 
         payment.refresh_from_db()
-
         return {
             "reference": payment.reference,
             "result": payment.status,
             "detail": "Paystack reported a failed or abandoned transaction.",
         }
 
-    # Unknown states, including reversed, must not be treated as a safe
-    # failure. Leave the payment unresolved for investigation.
     return {
         "reference": payment.reference,
         "result": "manual_review",
-        "detail": f"Unrecognized Paystack transaction status: {provider_status!r}.",
+        "detail": (
+            "Unrecognized Paystack transaction status: "
+            f"{provider_status!r}."
+        ),
     }

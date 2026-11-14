@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import APIException
 
@@ -9,14 +10,14 @@ from apps.payments.reconciliation import reconcile_payment
 
 
 class Command(BaseCommand):
-    help = "Reconcile unresolved Paystack payment initialization attempts."
+    help = "Reconcile unresolved Paystack payment attempts."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--minutes",
             type=int,
             default=1,
-            help="Only check INITIALIZED payments at least this many minutes old.",
+            help="Only check payments at least this many minutes old.",
         )
         parser.add_argument(
             "--limit",
@@ -30,54 +31,49 @@ class Command(BaseCommand):
         limit = options["limit"]
 
         if minutes < 0:
-            self.stderr.write("--minutes cannot be negative.")
+            self.stderr.write(self.style.ERROR("--minutes cannot be negative."))
             return
 
         if limit < 1:
-            self.stderr.write("--limit must be at least 1.")
+            self.stderr.write(self.style.ERROR("--limit must be at least 1."))
             return
 
         cutoff = timezone.now() - timedelta(minutes=minutes)
-
-        payments = Payment.objects.filter(
-            status=Payment.Status.INITIALIZED,
-            created_at__lte=cutoff,
-        ).order_by("created_at")[:limit]
-
-        payment_references = list(
-            payments.values_list("reference", flat=True)
+        payments = (
+            Payment.objects.filter(
+                Q(status=Payment.Status.INITIALIZED)
+                | Q(status=Payment.Status.PENDING),
+                created_at__lte=cutoff,
+            )
+            .order_by("created_at")[:limit]
         )
+        references = list(payments.values_list("reference", flat=True))
 
-        if not payment_references:
+        if not references:
             self.stdout.write(
-                self.style.SUCCESS("No unresolved payments need reconciliation.")
+                self.style.SUCCESS(
+                    "No unresolved payments need reconciliation."
+                )
             )
             return
 
         self.stdout.write(
-            f"Checking {len(payment_references)} unresolved payment(s)..."
+            f"Checking {len(references)} unresolved payment(s)..."
         )
 
-        for reference in payment_references:
+        for reference in references:
             try:
                 result = reconcile_payment(payment_reference=reference)
-
                 self.stdout.write(
-                    f"{reference}: {result['result']} — {result['detail']}"
+                    f"{reference}: {result['result']} - {result['detail']}"
                 )
-
             except APIException as exc:
                 self.stderr.write(
-                    self.style.WARNING(
-                        f"{reference}: reconciliation unavailable — {exc.detail}"
-                    )
+                    self.style.WARNING(f"{reference}: {exc.detail}")
                 )
-
             except Exception as exc:
                 self.stderr.write(
-                    self.style.ERROR(
-                        f"{reference}: unexpected error — {exc}"
-                    )
+                    self.style.ERROR(f"{reference}: unexpected error - {exc}")
                 )
 
         self.stdout.write(
