@@ -20,7 +20,7 @@ def issue_ticket(*, registration):
     ]
     if tickets:
         IssuedTicket.objects.bulk_create(tickets)
-    return IssuedTicket.objects.filter(registration=registration).order_by("issued_at")
+    return list(IssuedTicket.objects.filter(registration=registration).order_by("issued_at"))
 
 
 def build_ticket_token(ticket):
