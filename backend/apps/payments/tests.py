@@ -871,7 +871,7 @@ class PaymentReconciliationTests(APITestCase):
 
     @patch("apps.payments.reconciliation.requests.get")
     def test_already_resolved_payment_is_skipped(self, mock_get):
-        self.payment.status = Payment.Status.PENDING
+        self.payment.status = Payment.Status.SUCCESS
         self.payment.save(update_fields=["status"])
 
         result = reconcile_payment(
