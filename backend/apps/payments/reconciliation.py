@@ -125,11 +125,10 @@ def reconcile_payment(*, payment_reference):
                 .get(reference=payment.reference)
             )
             if locked_payment.status in unresolved_statuses:
-                locked_payment.status = (
-                    Payment.Status.FAILED
-                    if provider_status == "failed"
-                    else Payment.Status.ABANDONED
-                )
+                # Keep the existing payment lifecycle contract: both a
+                # provider failure and an abandoned checkout resolve as FAILED.
+                # Preserve the precise provider status in reconciliation metadata.
+                locked_payment.status = Payment.Status.FAILED
                 locked_payment.provider_response = {
                     "reconciliation": {
                         "provider_status": provider_status,
