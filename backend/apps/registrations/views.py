@@ -2,7 +2,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import MethodNotAllowed, ValidationError
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from apps.registrations.models import Registration
@@ -25,35 +25,22 @@ class RegistrationViewSet(viewsets.ModelViewSet):
 
         return queryset.filter(attendee=self.request.user)
 
-    def perform_create(self, serializer):
-        serializer.save(attendee=self.request.user)
-
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-
-        headers = self.get_success_headers(serializer.data)
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_201_CREATED,
-            headers=headers,
+        raise MethodNotAllowed(
+            "POST",
+            detail=(
+                "Registrations are created only after a successful payment "
+                "for an active ticket hold."
+            ),
         )
 
     def update(self, request, *args, **kwargs):
-        from rest_framework.exceptions import MethodNotAllowed
-
         raise MethodNotAllowed("PUT")
 
     def partial_update(self, request, *args, **kwargs):
-        from rest_framework.exceptions import MethodNotAllowed
-
         raise MethodNotAllowed("PATCH")
 
     def destroy(self, request, *args, **kwargs):
-        from rest_framework.exceptions import MethodNotAllowed
-
         raise MethodNotAllowed("DELETE")
 
     @action(detail=True, methods=["post"])
