@@ -18,9 +18,9 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.events.models import Event, TicketTier
-from apps.ticketing.models import TicketHold
-from apps.payments.models import Payment
-from apps.registrations.models import Registration
+from apps.ticketing.models import TicketHold, IssuedTicket
+from apps.payments.models import Payment, RefundAttempt
+from apps.registrations.models import Registration, EmailOutbox
 from apps.payments.reconciliation import (
     ReconciliationUnavailable,
     reconcile_payment,
@@ -413,6 +413,19 @@ class PaystackWebhookTests(APITestCase):
         self.assertEqual(
             Registration.objects.filter(
                 ticket_hold=self.hold,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            IssuedTicket.objects.filter(
+                registration__ticket_hold=self.hold,
+            ).count(),
+            self.hold.quantity,
+        )
+        self.assertEqual(
+            EmailOutbox.objects.filter(
+                recipient=self.attendee.email,
+                status=EmailOutbox.Status.PENDING,
             ).count(),
             1,
         )
@@ -1122,3 +1135,45 @@ class ReconciliationRaceConditionTests(APITestCase):
             ).count(),
             1,
         )
+class PaystackRefundTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(username="refund_admin", email="refund-admin@example.com", password="TestPassword123!")
+        self.attendee = User.objects.create_user(username="refund_attendee", email="refund-attendee@example.com", password="TestPassword123!")
+        now = timezone.now()
+        event = Event.objects.create(organizer=self.admin, title="Refund Event", slug="refund-event", description="Refund test.", venue="Minna", starts_at=now + timedelta(days=2), ends_at=now + timedelta(days=3), status=Event.Status.PUBLISHED)
+        tier = TicketTier.objects.create(event=event, name="Standard", price=Decimal("1000.00"), currency="NGN", total_quantity=10, sold_quantity=0)
+        hold = TicketHold.objects.create(attendee=self.attendee, ticket_tier=tier, quantity=1, status=TicketHold.Status.EXPIRED, expires_at=now - timedelta(minutes=1))
+        self.payment = Payment.objects.create(hold=hold, amount_subunit=100000, currency="NGN", status=Payment.Status.REFUND_REQUIRED, provider_transaction_id="987654321")
+        self.url = "/api/payments/refunds/{}/issue/".format(self.payment.reference)
+
+    @patch("apps.payments.refunds.requests.post")
+    def test_staff_can_issue_and_record_paystack_refund(self, mock_post):
+        response_obj = Mock()
+        response_obj.json.return_value = {"status": True, "data": {"id": 555, "status": "processed", "amount": 100000}}
+        mock_post.return_value = response_obj
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.payment.refresh_from_db()
+        refund = RefundAttempt.objects.get(payment=self.payment)
+        self.assertEqual(self.payment.status, Payment.Status.REFUNDED)
+        self.assertEqual(refund.status, RefundAttempt.Status.PROCESSED)
+        self.assertEqual(refund.provider_refund_id, "555")
+        mock_post.assert_called_once()
+
+    @patch("apps.payments.refunds.requests.post")
+    def test_pending_paystack_refund_is_not_submitted_twice(self, mock_post):
+        response_obj = Mock()
+        response_obj.json.return_value = {"status": True, "data": {"id": 556, "status": "pending", "amount": 100000}}
+        mock_post.return_value = response_obj
+        self.client.force_authenticate(user=self.admin)
+        first = self.client.post(self.url)
+        second = self.client.post(self.url)
+        self.assertEqual(first.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(second.status_code, status.HTTP_202_ACCEPTED)
+        mock_post.assert_called_once()
+
+    def test_non_staff_cannot_issue_refund(self):
+        self.client.force_authenticate(user=self.attendee)
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

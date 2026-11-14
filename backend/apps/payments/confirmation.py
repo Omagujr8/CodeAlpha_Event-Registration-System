@@ -8,6 +8,8 @@ from apps.payments.models import Payment
 from apps.payments.services import naira_to_kobo
 from apps.registrations.models import Registration
 from apps.ticketing.models import TicketHold
+from apps.ticketing.ticket_services import issue_ticket
+from apps.registrations.email_services import enqueue_registration_confirmation
 
 
 def mark_payment_refund_required(
@@ -205,6 +207,12 @@ def confirm_successful_payment(*, payment_reference, verified_data):
         ticket_tier=ticket_tier,
         ticket_hold=hold,
         status=Registration.Status.CONFIRMED,
+    )
+
+    issued_tickets = issue_ticket(registration=registration)
+    enqueue_registration_confirmation(
+        registration=registration,
+        tickets=issued_tickets,
     )
 
     ticket_tier.sold_quantity += hold.quantity
