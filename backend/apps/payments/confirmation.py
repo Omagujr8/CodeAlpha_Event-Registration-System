@@ -209,10 +209,10 @@ def confirm_successful_payment(*, payment_reference, verified_data):
         status=Registration.Status.CONFIRMED,
     )
 
-    issued_ticket = issue_ticket(registration=registration)
+    issued_tickets = issue_ticket(registration=registration)
     enqueue_registration_confirmation(
         registration=registration,
-        ticket=issued_ticket,
+        tickets=issued_tickets,
     )
 
     ticket_tier.sold_quantity += hold.quantity
