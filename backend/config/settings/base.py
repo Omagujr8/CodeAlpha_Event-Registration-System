@@ -157,3 +157,11 @@ PAYSTACK_BASE_URL = env(
     "PAYSTACK_BASE_URL",
     default="https://api.paystack.co",
 )
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND",
+    default="django.core.mail.backends.console.EmailBackend",
+)
+DEFAULT_FROM_EMAIL = env(
+    "DEFAULT_FROM_EMAIL",
+    default="no-reply@example.test",
+)
