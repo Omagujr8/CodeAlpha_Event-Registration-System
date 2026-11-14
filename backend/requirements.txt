@@ -38,3 +38,4 @@ types-PyYAML==6.0.12.20260906
 typing_extensions==4.16.0
 tzdata==2026.5
 urllib3==2.8.0
+qrcode==8.2
