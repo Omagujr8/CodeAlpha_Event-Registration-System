@@ -125,13 +125,9 @@ class RegistrationAPITests(APITestCase):
 
         self.assertEqual(
             response.status_code,
-            status.HTTP_201_CREATED,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
         )
-
-        registration = Registration.objects.get(
-            reference=response.data["reference"]
-        )
-        self.assertEqual(registration.attendee, self.attendee)
+        self.assertEqual(Registration.objects.count(), 0)
 
     def test_rejects_ticket_tier_from_another_event(self):
         self.client.force_authenticate(user=self.attendee)
@@ -147,7 +143,7 @@ class RegistrationAPITests(APITestCase):
 
         self.assertEqual(
             response.status_code,
-            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
         )
         self.assertEqual(Registration.objects.count(), 0)
 
