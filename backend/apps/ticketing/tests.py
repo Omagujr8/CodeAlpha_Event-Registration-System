@@ -202,3 +202,49 @@ class TicketHoldAPITests(TestCase):
         response = self.create_hold()
 
         self.assertEqual(response.status_code, 400)
+from apps.registrations.models import Registration
+from apps.ticketing.models import IssuedTicket
+from apps.ticketing.ticket_services import build_ticket_token
+
+
+class IssuedTicketAPITests(TestCase):
+    def setUp(self):
+        self.attendee = User.objects.create_user(username="ticket_attendee", email="ticket-attendee@example.com", password="TestPassword123!")
+        self.organizer = User.objects.create_user(username="ticket_organizer", email="ticket-organizer@example.com", password="TestPassword123!")
+        now = timezone.now()
+        self.event = Event.objects.create(organizer=self.organizer, title="Ticketed Conference", slug="ticketed-conference", description="Ticket test event.", venue="Minna", starts_at=now + timedelta(days=5), ends_at=now + timedelta(days=6), status=Event.Status.PUBLISHED)
+        self.tier = TicketTier.objects.create(event=self.event, name="General", price="1000.00", currency="NGN", total_quantity=10, sold_quantity=2)
+        self.hold = TicketHold.objects.create(attendee=self.attendee, ticket_tier=self.tier, quantity=2, status=TicketHold.Status.CONVERTED, expires_at=now + timedelta(minutes=10))
+        self.registration = Registration.objects.create(attendee=self.attendee, event=self.event, ticket_tier=self.tier, ticket_hold=self.hold, status=Registration.Status.CONFIRMED)
+        self.ticket = IssuedTicket.objects.create(registration=self.registration)
+        self.client = APIClient()
+
+    def test_attendee_can_retrieve_own_qr_ticket(self):
+        self.client.force_authenticate(user=self.attendee)
+        response = self.client.get("/api/ticketing/tickets/{}/".format(self.ticket.reference))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], IssuedTicket.Status.ISSUED)
+        self.assertIn("<svg", response.data["qr_svg"])
+
+    def test_attendee_cannot_retrieve_another_users_ticket(self):
+        another = User.objects.create_user(username="ticket_other", email="ticket-other@example.com", password="TestPassword123!")
+        self.client.force_authenticate(user=another)
+        response = self.client.get("/api/ticketing/tickets/{}/".format(self.ticket.reference))
+        self.assertEqual(response.status_code, 404)
+
+    def test_organizer_can_check_in_ticket_once(self):
+        self.client.force_authenticate(user=self.organizer)
+        token = build_ticket_token(self.ticket)
+        response = self.client.post("/api/ticketing/check-in/", {"token": token}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.status, IssuedTicket.Status.CHECKED_IN)
+        self.assertEqual(self.ticket.checked_in_by, self.organizer)
+        duplicate = self.client.post("/api/ticketing/check-in/", {"token": token}, format="json")
+        self.assertEqual(duplicate.status_code, 400)
+
+    def test_unrelated_user_cannot_check_in_ticket(self):
+        another = User.objects.create_user(username="unrelated", email="unrelated@example.com", password="TestPassword123!")
+        self.client.force_authenticate(user=another)
+        response = self.client.post("/api/ticketing/check-in/", {"token": build_ticket_token(self.ticket)}, format="json")
+        self.assertEqual(response.status_code, 403)
