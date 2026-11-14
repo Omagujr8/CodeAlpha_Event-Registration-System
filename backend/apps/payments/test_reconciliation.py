@@ -136,8 +136,8 @@ class PaymentReconciliationTests(TestCase):
         result = reconcile_payment(payment_reference=self.payment.reference)
 
         self.payment.refresh_from_db()
-        self.assertEqual(result["result"], Payment.Status.ABANDONED)
-        self.assertEqual(self.payment.status, Payment.Status.ABANDONED)
+        self.assertEqual(result["result"], Payment.Status.FAILED)
+        self.assertEqual(self.payment.status, Payment.Status.FAILED)
         self.assertTrue(
             self.payment.provider_response["reconciliation"]["retryable"]
         )
@@ -156,3 +156,14 @@ class PaymentReconciliationTests(TestCase):
         self.payment.refresh_from_db()
         self.assertEqual(self.payment.status, Payment.Status.PENDING)
         self.assertEqual(Registration.objects.count(), 0)
+
+    @patch("apps.payments.reconciliation.requests.get")
+    def test_already_resolved_payment_is_skipped(self, mock_get):
+        self.payment.status = Payment.Status.SUCCESS
+        self.payment.save(update_fields=["status"])
+
+        result = reconcile_payment(payment_reference=self.payment.reference)
+
+        self.assertEqual(result["result"], "skipped")
+        mock_get.assert_not_called()
+
