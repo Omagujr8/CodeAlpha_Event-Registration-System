@@ -92,7 +92,7 @@ class RegistrationAPITests(APITestCase):
             ],
         )
 
-    def test_attendee_can_create_registration(self):
+    def test_attendee_cannot_create_registration_without_payment(self):
         self.client.force_authenticate(user=self.attendee)
 
         response = self.client.post(
@@ -106,20 +106,9 @@ class RegistrationAPITests(APITestCase):
 
         self.assertEqual(
             response.status_code,
-            status.HTTP_201_CREATED,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
         )
-
-        registration = Registration.objects.get(
-            reference=response.data["reference"]
-        )
-
-        self.assertEqual(registration.attendee, self.attendee)
-        self.assertEqual(registration.event, self.event)
-        self.assertEqual(registration.ticket_tier, self.tier)
-        self.assertEqual(
-            registration.status,
-            Registration.Status.PENDING,
-        )
+        self.assertEqual(Registration.objects.count(), 0)
 
     def test_client_cannot_assign_registration_to_another_user(self):
         self.client.force_authenticate(user=self.attendee)
