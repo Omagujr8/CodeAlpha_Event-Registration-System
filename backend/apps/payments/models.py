@@ -1,5 +1,6 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 from apps.ticketing.models import TicketHold
@@ -100,7 +101,7 @@ class RefundAttempt(models.Model):
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
     provider_refund_id = models.CharField(max_length=100, blank=True)
     provider_response = models.JSONField(default=dict, blank=True)
-    requested_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="requested_refunds")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="requested_refunds")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     processed_at = models.DateTimeField(null=True, blank=True)
