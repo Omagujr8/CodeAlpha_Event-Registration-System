@@ -17,6 +17,7 @@ class Payment(models.Model):
         FAILED = "failed", "Failed"
         ABANDONED = "abandoned", "Abandoned"
         REFUND_REQUIRED = "refund_required", "Refund Required"
+        REFUNDED = "refunded", "Refunded"
 
     reference = models.CharField(
         max_length=100,
@@ -86,3 +87,20 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.reference} - {self.status}"
+
+
+class RefundAttempt(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSED = "processed", "Processed"
+        FAILED = "failed", "Failed"
+
+    payment = models.OneToOneField(Payment, on_delete=models.PROTECT, related_name="refund")
+    amount_subunit = models.PositiveBigIntegerField()
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
+    provider_refund_id = models.CharField(max_length=100, blank=True)
+    provider_response = models.JSONField(default=dict, blank=True)
+    requested_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="requested_refunds")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
