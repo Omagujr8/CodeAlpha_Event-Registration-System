@@ -42,7 +42,7 @@ class IssuedTicket(models.Model):
         REVOKED = "revoked", "Revoked"
 
     reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
-    registration = models.OneToOneField("registrations.Registration", on_delete=models.PROTECT, related_name="ticket")
+    registration = models.ForeignKey("registrations.Registration", on_delete=models.PROTECT, related_name="tickets")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ISSUED, db_index=True)
     issued_at = models.DateTimeField(auto_now_add=True)
     checked_in_at = models.DateTimeField(null=True, blank=True)
