@@ -66,7 +66,7 @@ The API is available at `http://127.0.0.1:8000/`.
 | GET/PATCH/DELETE | `/api/events/{id}/` | Retrieve or manage an event subject to organizer permissions |
 | POST | `/api/ticketing/holds/` | Reserve ticket inventory temporarily |
 | GET | `/api/ticketing/holds/{reference}/` | Retrieve the caller's hold |
-| POST | `/api/ticketing/holds/{reference}/release/` | Release the caller's active hold |
+| POST | `/api/ticketing/holds/{reference}/release/` | Release the caller's active hold |\n| GET | `/api/ticketing/tickets/{reference}/` | Retrieve the caller's issued ticket and QR SVG |\n| POST | `/api/ticketing/check-in/` | Organizer/staff scans and validates a signed QR token |
 | POST | `/api/payments/initialize/` | Initialize Paystack for an owned hold |
 | POST | `/api/payments/webhook/paystack/` | Receive signed Paystack webhooks |
 | GET | `/api/registrations/` | List the caller's registrations |
